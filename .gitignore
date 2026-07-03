@@ -28,6 +28,9 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# local OCR model data
+eng.traineddata
+
 # vercel
 .vercel
 
