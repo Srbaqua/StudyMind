@@ -115,8 +115,3 @@ npm run start
 npm run lint
 ```
 
-## Notes
-
-- `eng.traineddata` is a local OCR asset and is intentionally ignored by Git.
-- If you switch providers or models, update `.env.local` first.
-- The graph builder needs embedded chunks, not just uploaded documents.
