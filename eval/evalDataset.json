@@ -1,0 +1,27 @@
+[
+  {
+    "question": "What is the time complexity of Dijkstra's algorithm using a min-heap?",
+    "groundTruth": "O((V + E) log V) where V is vertices and E is edges",
+    "context": "Replace with actual text from your uploaded notes after uploading documents."
+  },
+  {
+    "question": "What is the difference between a process and a thread?",
+    "groundTruth": "A process has its own memory space; a thread shares memory with other threads in the same process.",
+    "context": "Replace with actual text from your OS lecture notes."
+  },
+  {
+    "question": "What is database normalization?",
+    "groundTruth": "Organizing a database to reduce redundancy and improve integrity by splitting tables and defining relationships.",
+    "context": "Replace with actual text from your DBMS notes."
+  },
+  {
+    "question": "What is virtual memory?",
+    "groundTruth": "A technique giving processes the illusion of large contiguous memory using paging/segmentation mapped to physical RAM.",
+    "context": "Replace with actual text from your notes."
+  },
+  {
+    "question": "What are the four conditions for deadlock?",
+    "groundTruth": "Mutual exclusion, hold and wait, no preemption, and circular wait.",
+    "context": "Replace with actual text from your notes."
+  }
+]
