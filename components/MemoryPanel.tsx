@@ -1,6 +1,29 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+
+const markdownComponents: Components = {
+  p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-gray-300">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1 ml-1">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1 ml-1">{children}</ol>,
+  li: ({ children }) => <li className="text-gray-200">{children}</li>,
+  h1: ({ children }) => <p className="font-semibold text-white mb-1 mt-2">{children}</p>,
+  h2: ({ children }) => <p className="font-semibold text-white mb-1 mt-2">{children}</p>,
+  h3: ({ children }) => <p className="font-semibold text-white mb-1 mt-2">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+  em: ({ children }) => <em className="italic text-gray-200">{children}</em>,
+  code: ({ children }) => (
+    <code className="bg-gray-900 px-1.5 py-0.5 rounded text-xs text-emerald-400 break-words">{children}</code>
+  ),
+  pre: ({ children }) => (
+    <pre className="bg-gray-900 rounded-lg p-3 overflow-x-auto text-xs my-2">{children}</pre>
+  ),
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 underline">{children}</a>
+  ),
+};
 
 export function MemoryPanel() {
   const [summary, setSummary] = useState<string>("");
@@ -58,7 +81,9 @@ export function MemoryPanel() {
           <p className="mt-2 text-xs text-gray-500">Ask one question or upload a note, then Cognee starts building your study graph.</p>
         </div>
       ) : (
-        <p className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{summary}</p>
+        <div className="text-gray-300 text-sm leading-relaxed">
+          <ReactMarkdown components={markdownComponents}>{summary}</ReactMarkdown>
+        </div>
       )}
 
       <button
