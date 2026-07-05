@@ -35,12 +35,14 @@ export function MemoryPanel() {
     setIsLoading(true);
     try {
       const res = await fetch("/api/memory", { cache: "no-store" });
-      const data = (await res.json()) as { summary?: string; error?: string; status?: string };
-      setSummary(data.summary ?? data.error ?? "Nothing yet.");
-      setStatus(data.status ?? "empty");
+      const data = (await res.json()) as { summary?: string | null; error?: string; status?: string };
+      setSummary((prev) => {
+        const next = data.summary ?? data.error ?? null;
+        return next && next.trim() !== "" ? next : prev;
+      });
+      setStatus((prev) => (data.status === "empty" && prev !== "empty" && prev !== "error") ? prev : (data.status ?? prev));
     } catch (err) {
-      setSummary(`Error: ${String(err)}`);
-      setStatus("error");
+      // keep previous summary on network errors so the panel does not wipe itself
     } finally {
       setIsLoading(false);
     }
