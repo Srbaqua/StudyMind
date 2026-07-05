@@ -13,6 +13,24 @@ StudyMind is a Next.js app for turning lecture notes, PDFs, slide decks, and ima
 - Quiz generation from uploaded material
 - Evaluation endpoint for the built-in dataset
 
+## Memory Layer (Cognee)
+
+StudyMind builds two separate graphs:
+
+1. **Document knowledge graph** (`topics`/`chunks`, UMAP + DBSCAN) — a map of what's *in your notes*.
+2. **Learner memory graph** (Cognee) — a map of *you*: what you've asked, what you've been told before,
+   and what you keep coming back to.
+
+Every `/api/ask` call now:
+- calls `recall()` on the learner's memory before answering, so the model can build on prior
+  questions instead of repeating itself,
+- calls `remember()` after answering, storing the interaction into the learner's memory graph.
+
+`GET /api/memory` summarizes the learner's memory graph for the "Your Learning Memory" panel.
+`DELETE /api/memory` calls `forget()` to wipe it (e.g. once a subject/exam is done).
+
+Requires `COGNEE_SERVICE_URL` and `COGNEE_API_KEY` — see Environment Variables.
+
 ## Tech Stack
 
 - Next.js 14 App Router

@@ -6,6 +6,7 @@ import { extractPptx } from "@/ingestion/pptxExtractor";
 import { extractImage } from "@/ingestion/imageExtractor";
 import { chunkDocument } from "@/ingestion/chunker";
 import { embedAndStoreChunks } from "@/retrieval/embedder";
+import { rememberInteraction } from "@/lib/cognee";
 import { randomUUID } from "crypto";
 
 export const maxDuration = 300;
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
     });
     if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 });
 
-    processDocument(docId, buffer, fmt).catch(async (err) => {
+    processDocument(docId, buffer, fmt, file.name, subject).catch(async (err) => {
       console.error("Processing failed for doc", docId, err);
       await supabase
         .from("documents")
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function processDocument(docId: string, buffer: Buffer, fmt: string) {
+async function processDocument(docId: string, buffer: Buffer, fmt: string, fileName: string, subject: string) {
   const supabase = getServiceSupabase();
 
   try {
@@ -79,6 +80,10 @@ async function processDocument(docId: string, buffer: Buffer, fmt: string) {
       .from("documents")
       .update({ status: "ready", page_count: pageCount })
       .eq("id", docId);
+
+    rememberInteraction(
+      `Uploaded study material: "${fileName}"${subject ? ` for ${subject}` : ""}. File type: ${fmt}. Extracted ${chunks.length} chunks across ${pageCount} pages. This is part of the learner's study history.`
+    ).catch((err) => console.error("cognee remember failed for upload:", err));
   } catch (err) {
     await supabase
       .from("documents")
