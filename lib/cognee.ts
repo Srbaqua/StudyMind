@@ -32,17 +32,16 @@ async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
  */
 export async function rememberInteraction(text: string, dataset: string = DEFAULT_DATASET): Promise<void> {
   const form = new FormData();
-  // Must be an actual file part (UploadFile), not a plain string field —
-  // Cognee's /add endpoint rejects string fields with a 422.
   const blob = new Blob([text], { type: "text/plain" });
   form.append("data", blob, "interaction.txt");
   form.append("datasetName", dataset);
+//   form.append("run_in_background", "false");
 
-  await cogneeFetch("/api/v1/add", {
+  const result = await cogneeFetch("/api/v1/remember", {
     method: "POST",
     body: form,
   });
-
+  console.log(`[cognee] remember → dataset="${dataset}":`, JSON.stringify(result));
   await cogneeFetch("/api/v1/cognify", {
     method: "POST",
     body: JSON.stringify({
@@ -66,7 +65,13 @@ export async function recallMemory(query: string, dataset: string = DEFAULT_DATA
     });
   } catch (err) {
     const message = String(err);
-    if (message.includes("Recall prerequisites not met") || message.includes("failed: 404")) {
+    // These all mean "nothing usable to recall yet" rather than a real failure —
+    // treat them as empty instead of throwing, so it never breaks the answer flow.
+    if (
+      message.includes("Recall prerequisites not met") ||
+      message.includes("failed: 404") ||
+      message.includes("failed: 409")
+    ) {
       return "";
     }
     throw err;
@@ -86,9 +91,29 @@ export async function recallMemory(query: string, dataset: string = DEFAULT_DATA
     .filter(Boolean)
     .join("\n---\n");
 }
-
 export async function forgetMemory(dataset: string = DEFAULT_DATASET): Promise<void> {
-  await cogneeFetch(`/api/v1/datasets/${encodeURIComponent(dataset)}`, {
+  const list = await cogneeFetch("/api/v1/datasets", { method: "GET" });
+  const datasets: unknown[] = Array.isArray(list) ? list : list?.datasets ?? list?.data ?? [];
+
+  const match = datasets.find((d) => {
+    if (d && typeof d === "object") {
+      const obj = d as Record<string, unknown>;
+      return obj.name === dataset || obj.dataset_name === dataset || obj.datasetName === dataset;
+    }
+    return false;
+  }) as Record<string, unknown> | undefined;
+
+  if (!match) {
+    // Nothing to forget — dataset doesn't exist yet, treat as a no-op success.
+    return;
+  }
+
+  const datasetId = (match.id ?? match.dataset_id ?? match.datasetId) as string | undefined;
+  if (!datasetId) {
+    throw new Error(`Could not resolve an id for dataset "${dataset}" from Cognee's dataset list`);
+  }
+
+  await cogneeFetch(`/api/v1/datasets/${encodeURIComponent(datasetId)}`, {
     method: "DELETE",
   });
 }
