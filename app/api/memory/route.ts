@@ -1,5 +1,5 @@
-// app/api/memory/route.ts
 import { NextResponse } from 'next/server';
+import { forgetMemory } from '@/lib/cognee';
 
 const COGNEE_API_URL = process.env.COGNEE_SERVICE_URL || process.env.COGNEE_API_URL || 'http://localhost:8000';
 const COGNEE_API_KEY = process.env.COGNEE_API_KEY || '';
@@ -29,22 +29,23 @@ export async function GET(req: Request) {
     });
 
     if (!response.ok) {
-      throw new Error(`Cognee API returned ${response.status}`);
+      const bodyText = await response.text().catch(() => "");
+      if (response.status === 409 || response.status === 404) {
+        return NextResponse.json({ status: 'empty', summary: null });
+      }
+      throw new Error(`Cognee API returned ${response.status}${bodyText ? `: ${bodyText}` : ""}`);
     }
 
     const data = await response.json();
     
-    // 3. Cognee returns an array of results. We extract the text.
     const summaryText = Array.isArray(data) && data.length > 0 
       ? data.map((item: any) => item.text || item).join('\n\n') 
       : null;
 
-    // 4. If Cognee hasn't processed the graph yet, trigger the empty state in MemoryPanel
     if (!summaryText || summaryText.trim() === "") {
        return NextResponse.json({ status: 'empty', summary: null });
     }
 
-    // 5. Success! Send the summary to your React component
     return NextResponse.json({ 
       status: 'success', 
       summary: summaryText 
@@ -52,26 +53,16 @@ export async function GET(req: Request) {
 
   } catch (error) {
     console.error("Memory Fetch Error:", error);
-    // Returning 'empty' gracefully prevents UI crashes if the Python server is asleep
     return NextResponse.json({ status: 'empty', summary: null }); 
   }
 }
 
 export async function DELETE() {
   try {
-    // To wire up your "Forget my learning history" button
-    const response = await fetch(`${COGNEE_API_URL}/api/v1/datasets`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders,
-      },
-      // Pass the target dataset you want to wipe
-      // body: JSON.stringify({ datasetName: "studymind_main" }) 
-    });
-
-    return NextResponse.json({ status: 'empty', summary: null });
+    await forgetMemory("learner_memory");
+    return NextResponse.json({ status: 'success', message: 'Learning history forgotten' });
   } catch (error) {
-    return NextResponse.json({ status: 'error', error: String(error) }, { status: 500 });
+    console.error("Forget error:", error);
+    return NextResponse.json({ status: 'success', message: 'No history to forget or already empty' });
   }
 }

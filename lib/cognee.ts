@@ -3,23 +3,36 @@ const API_KEY = process.env.COGNEE_API_KEY ?? "";
 const DEFAULT_DATASET = process.env.COGNEE_DATASET_NAME ?? "learner_memory";
 export const CONTENT_DATASET = "course_content";
 
+const isCloud = BASE_URL.includes("aws.cognee.ai") || BASE_URL.includes("api.cognee.ai");
+
+const REMEMBER_RETRY_ATTEMPTS = 4;
+const REMEMBER_RETRY_BASE_MS = 1000;
+
+function jitter(ms: number) {
+  return ms + Math.floor(Math.random() * 500);
+}
+
+function isRememberRetryableError(status: number, body: string) {
+  if (status === 409) return true;
+  if (status === 500 && /ProgrammingError|RetryError|database is locked/i.test(body)) return true;
+  return false;
+}
+
 async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
   if (!BASE_URL) {
     throw new Error("Cognee not configured: set COGNEE_SERVICE_URL");
   }
 
   const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
-  
-  // Safely construct headers
+
   const headers: Record<string, string> = {
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(init.headers as Record<string, string> || {}),
   };
 
-  // Only append auth headers if a key actually exists
   if (API_KEY && API_KEY.trim() !== "") {
     headers["X-Api-Key"] = API_KEY;
-    if (!BASE_URL.includes("aws.cognee.ai") && !BASE_URL.includes("api.cognee.ai")) {
+    if (!isCloud) {
       headers["Authorization"] = `Bearer ${API_KEY}`;
     }
   }
@@ -36,28 +49,92 @@ async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
   return res.json();
 }
 
+async function cogneeFetchWithRetry(path: string, init: RequestInit): Promise<any> {
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt < REMEMBER_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await cogneeFetch(path, init);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      const message = String(err);
+      const match = message.match(/failed: (\d{3})(?: (.+))?$/);
+      const status = match ? Number(match[1]) : 0;
+      const body = match ? (match[2] || "") : message;
+
+      if (!isRememberRetryableError(status, body) || attempt >= REMEMBER_RETRY_ATTEMPTS - 1) {
+        throw error;
+      }
+
+      const delayMs = jitter(REMEMBER_RETRY_BASE_MS * 2 ** attempt);
+      console.warn(`[cognee] remember retry ${attempt + 1}/${REMEMBER_RETRY_ATTEMPTS} in ${delayMs}ms: ${message}`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      lastErr = error;
+    }
+  }
+
+  throw lastErr ?? new Error("cogneeFetchWithRetry failed with no error captured");
+}
+
 /**
  * Write text into a Cognee dataset and turn it into graph structure.
  * `remember` automatically processes the text into the graph. Do not call
  * `cognify` immediately afterward to prevent SQLite database lock errors.
  */
 export async function rememberInteraction(text: string, dataset: string = DEFAULT_DATASET): Promise<void> {
-  const form = new FormData();
-  const blob = new Blob([text], { type: "text/plain" });
+  // Get or create the mutex lock for this dataset
+  const lock = getMemoryLock(dataset);
   
-  form.append("data", blob, "interaction.txt");
-  // Cognee's Python backend expects snake_case for this parameter
-  form.append("dataset_name", dataset);
+  const release = await lock.acquire();
+  try {
+    const form = new FormData();
+    const blob = new Blob([text], { type: "text/plain" });
+    
+    form.append("data", blob, "interaction.txt");
+    form.append("datasetName", dataset);
 
-  const result = await cogneeFetch("/api/v1/remember", {
-    method: "POST",
-    body: form,
-  });
+    const result = await cogneeFetchWithRetry("/api/v1/remember", {
+      method: "POST",
+      body: form,
+    });
+    
+    console.log(`[cognee] remember → dataset="${dataset}":`, JSON.stringify(result));
+  } finally {
+    release();
+  }
+}
+
+// Simple mutex for serializing memory operations per dataset
+let memoryLocks: Map<string, { locked: boolean; waitQueue: (() => void)[] }> = new Map();
+
+function getMemoryLock(dataset: string) {
+  let lock = memoryLocks.get(dataset);
+  if (!lock) {
+    lock = { locked: false, waitQueue: [] };
+    memoryLocks.set(dataset, lock);
+  }
   
-  console.log(`[cognee] remember → dataset="${dataset}":`, JSON.stringify(result));
-  
-  // NOTE: The manual /api/v1/cognify fetch has been removed. 
-  // Cognee automatically builds the graph during the `remember` process.
+  return {
+    acquire: () => new Promise<() => void>((resolve) => {
+      if (!lock.locked) {
+        lock.locked = true;
+        resolve(() => {
+          lock.locked = false;
+          const next = lock.waitQueue.shift();
+          if (next) next();
+        });
+      } else {
+        lock.waitQueue.push(() => {
+          lock.locked = true;
+          resolve(() => {
+            lock.locked = false;
+            const next = lock.waitQueue.shift();
+            if (next) next();
+          });
+        });
+      }
+    })
+  };
 }
 
 export async function recallMemory(query: string, dataset: string = DEFAULT_DATASET): Promise<string> {
@@ -101,8 +178,23 @@ export async function recallMemory(query: string, dataset: string = DEFAULT_DATA
 }
 
 export async function forgetMemory(dataset: string = DEFAULT_DATASET): Promise<void> {
-  const list = await cogneeFetch("/api/v1/datasets", { method: "GET" });
-  const datasets: unknown[] = Array.isArray(list) ? list : list?.datasets ?? list?.data ?? [];
+  // Get list of datasets to find the ID for our dataset
+  let listRaw: unknown;
+  try {
+    listRaw = await cogneeFetch("/api/v1/datasets", { method: "GET" });
+  } catch (err) {
+    const errMsg = String(err);
+    if (errMsg.includes("failed: 409") || errMsg.includes("failed: 500")) {
+      await new Promise((r) => setTimeout(r, 2000));
+      listRaw = await cogneeFetch("/api/v1/datasets", { method: "GET" });
+    } else {
+      throw err;
+    }
+  }
+
+  const rawDatasets: unknown = Array.isArray(listRaw) ? listRaw : (listRaw as Record<string, unknown>)?.datasets ?? (listRaw as Record<string, unknown>)?.data;
+   
+  const datasets: unknown[] = Array.isArray(rawDatasets) ? rawDatasets : [];
 
   const match = datasets.find((d) => {
     if (d && typeof d === "object") {
@@ -113,7 +205,6 @@ export async function forgetMemory(dataset: string = DEFAULT_DATASET): Promise<v
   }) as Record<string, unknown> | undefined;
 
   if (!match) {
-    // Nothing to forget — dataset doesn't exist yet, treat as a no-op success.
     return;
   }
 
