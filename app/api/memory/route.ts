@@ -1,68 +1,53 @@
-import { NextResponse } from 'next/server';
-import { forgetMemory } from '@/lib/cognee';
+import { NextResponse } from "next/server";
+import { recallMemory, forgetMemory, CONTENT_DATASET } from "@/lib/cognee";
 
-const COGNEE_API_URL = process.env.COGNEE_SERVICE_URL || process.env.COGNEE_API_URL || 'http://localhost:8000';
-const COGNEE_API_KEY = process.env.COGNEE_API_KEY || '';
+export const maxDuration = 60;
 
-const isCloud = COGNEE_API_URL.includes('aws.cognee.ai') || COGNEE_API_URL.includes('api.cognee.ai');
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
 
-const authHeaders: Record<string, string> = COGNEE_API_KEY
-  ? {
-      'X-Api-Key': COGNEE_API_KEY,
-      ...(!isCloud ? { 'Authorization': `Bearer ${COGNEE_API_KEY}` } : {}),
-    }
-  : {};
-
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const payload = {
-      query: "Provide a high-level summary of the concepts I have uploaded and asked about so far.",
-    };
+    const [learnerMemory, conceptGraph] = await Promise.all([
+      withTimeout(
+        recallMemory(
+          "Summarize what topics this student has asked about, what they seem to understand well, and what they keep struggling with."
+        ).catch(() => ""),
+        25000,
+        ""
+      ),
+      withTimeout(
+        recallMemory("What are the key concepts in the notes and how do they relate?", CONTENT_DATASET).catch(() => ""),
+        25000,
+        ""
+      ),
+    ]);
 
-    const response = await fetch(`${COGNEE_API_URL}/api/v1/recall`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders,
-      },
-      body: JSON.stringify(payload)
+    const summary = [learnerMemory, conceptGraph].filter(Boolean).join("\n\n---\n\n");
+
+    return NextResponse.json({
+      status: summary ? "ready" : "empty",
+      summary: summary || "Still building your study graph — ask a couple more questions, then refresh.",
     });
-
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      if (response.status === 409 || response.status === 404) {
-        return NextResponse.json({ status: 'empty', summary: null });
-      }
-      throw new Error(`Cognee API returned ${response.status}${bodyText ? `: ${bodyText}` : ""}`);
-    }
-
-    const data = await response.json();
-    
-    const summaryText = Array.isArray(data) && data.length > 0 
-      ? data.map((item: any) => item.text || item).join('\n\n') 
-      : null;
-
-    if (!summaryText || summaryText.trim() === "") {
-       return NextResponse.json({ status: 'empty', summary: null });
-    }
-
-    return NextResponse.json({ 
-      status: 'success', 
-      summary: summaryText 
+  } catch (err) {
+    console.error("Memory fetch error:", err);
+    return NextResponse.json({
+      status: "empty",
+      summary: "Still building your study graph — ask a couple more questions, then refresh.",
     });
-
-  } catch (error) {
-    console.error("Memory Fetch Error:", error);
-    return NextResponse.json({ status: 'empty', summary: null }); 
   }
 }
 
 export async function DELETE() {
   try {
-    await forgetMemory("learner_memory");
-    return NextResponse.json({ status: 'success', message: 'Learning history forgotten' });
-  } catch (error) {
-    console.error("Forget error:", error);
-    return NextResponse.json({ status: 'success', message: 'No history to forget or already empty' });
+    await forgetMemory("CONTENT_DATASET");
+    return NextResponse.json({ status: "success", message: "Learning history forgotten" });
+  } catch (err) {
+    console.error("Forget error:", err);
+    return NextResponse.json({ status: "success", message: "No history to forget or already empty" });
   }
 }
