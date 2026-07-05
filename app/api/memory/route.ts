@@ -1,27 +1,29 @@
 // app/api/memory/route.ts
 import { NextResponse } from 'next/server';
 
-// Update this to match where your Python Cognee server is running
-const COGNEE_API_URL = process.env.COGNEE_API_URL || 'http://localhost:8000';
+const COGNEE_API_URL = process.env.COGNEE_SERVICE_URL || process.env.COGNEE_API_URL || 'http://localhost:8000';
 const COGNEE_API_KEY = process.env.COGNEE_API_KEY || '';
+
+const isCloud = COGNEE_API_URL.includes('aws.cognee.ai') || COGNEE_API_URL.includes('api.cognee.ai');
+
+const authHeaders: Record<string, string> = COGNEE_API_KEY
+  ? {
+      'X-Api-Key': COGNEE_API_KEY,
+      ...(!isCloud ? { 'Authorization': `Bearer ${COGNEE_API_KEY}` } : {}),
+    }
+  : {};
 
 export async function GET(req: Request) {
   try {
-    // 1. We send a recall query to Cognee asking it to summarize the graph
     const payload = {
       query: "Provide a high-level summary of the concepts I have uploaded and asked about so far.",
-      // Ensure this dataset name matches what you use in /api/upload
-      // datasets: ["studymind_main"], 
-      // Ensure this session_id matches the one used in your ChatInterface!
-      // session_id: "default_user_session" 
     };
 
-    // 2. Hit the Cognee Python REST API
     const response = await fetch(`${COGNEE_API_URL}/api/v1/recall`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(COGNEE_API_KEY && { 'Authorization': `Bearer ${COGNEE_API_KEY}` })
+        ...authHeaders,
       },
       body: JSON.stringify(payload)
     });
@@ -62,7 +64,7 @@ export async function DELETE() {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
-        ...(COGNEE_API_KEY && { 'Authorization': `Bearer ${COGNEE_API_KEY}` })
+        ...authHeaders,
       },
       // Pass the target dataset you want to wipe
       // body: JSON.stringify({ datasetName: "studymind_main" }) 

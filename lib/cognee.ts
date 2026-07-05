@@ -4,18 +4,31 @@ const DEFAULT_DATASET = process.env.COGNEE_DATASET_NAME ?? "learner_memory";
 export const CONTENT_DATASET = "course_content";
 
 async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
-  if (!BASE_URL || !API_KEY) {
-    throw new Error("Cognee not configured: set COGNEE_SERVICE_URL and COGNEE_API_KEY");
+  if (!BASE_URL) {
+    throw new Error("Cognee not configured: set COGNEE_SERVICE_URL");
   }
+
   const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  
+  // Safely construct headers
+  const headers: Record<string, string> = {
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...(init.headers as Record<string, string> || {}),
+  };
+
+  // Only append auth headers if a key actually exists
+  if (API_KEY && API_KEY.trim() !== "") {
+    headers["X-Api-Key"] = API_KEY;
+    if (!BASE_URL.includes("aws.cognee.ai") && !BASE_URL.includes("api.cognee.ai")) {
+      headers["Authorization"] = `Bearer ${API_KEY}`;
+    }
+  }
+
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      ...(init.headers || {}),
-      "X-Api-Key": API_KEY,
-    },
+    headers,
   });
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Cognee ${path} failed: ${res.status} ${body}`);
@@ -25,30 +38,26 @@ async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
 
 /**
  * Write text into a Cognee dataset and turn it into graph structure.
- * IMPORTANT: /api/v1/add only reliably accepts multipart/form-data — every
- * documented working example uses -F flags, never a JSON body. Sending
- * datasetName as JSON gets silently dropped, which was the actual cause
- * of the "Either datasetId or datasetName must be provided" 409.
+ * `remember` automatically processes the text into the graph. Do not call
+ * `cognify` immediately afterward to prevent SQLite database lock errors.
  */
 export async function rememberInteraction(text: string, dataset: string = DEFAULT_DATASET): Promise<void> {
   const form = new FormData();
   const blob = new Blob([text], { type: "text/plain" });
+  
   form.append("data", blob, "interaction.txt");
-  form.append("datasetName", dataset);
-//   form.append("run_in_background", "false");
+  // Cognee's Python backend expects snake_case for this parameter
+  form.append("dataset_name", dataset);
 
   const result = await cogneeFetch("/api/v1/remember", {
     method: "POST",
     body: form,
   });
+  
   console.log(`[cognee] remember → dataset="${dataset}":`, JSON.stringify(result));
-  await cogneeFetch("/api/v1/cognify", {
-    method: "POST",
-    body: JSON.stringify({
-      datasets: [dataset],
-      run_in_background: true,
-    }),
-  });
+  
+  // NOTE: The manual /api/v1/cognify fetch has been removed. 
+  // Cognee automatically builds the graph during the `remember` process.
 }
 
 export async function recallMemory(query: string, dataset: string = DEFAULT_DATASET): Promise<string> {
@@ -65,8 +74,7 @@ export async function recallMemory(query: string, dataset: string = DEFAULT_DATA
     });
   } catch (err) {
     const message = String(err);
-    // These all mean "nothing usable to recall yet" rather than a real failure —
-    // treat them as empty instead of throwing, so it never breaks the answer flow.
+    // Treat "not met", 404, or 409 as an empty graph rather than a hard crash
     if (
       message.includes("Recall prerequisites not met") ||
       message.includes("failed: 404") ||
@@ -91,6 +99,7 @@ export async function recallMemory(query: string, dataset: string = DEFAULT_DATA
     .filter(Boolean)
     .join("\n---\n");
 }
+
 export async function forgetMemory(dataset: string = DEFAULT_DATASET): Promise<void> {
   const list = await cogneeFetch("/api/v1/datasets", { method: "GET" });
   const datasets: unknown[] = Array.isArray(list) ? list : list?.datasets ?? list?.data ?? [];

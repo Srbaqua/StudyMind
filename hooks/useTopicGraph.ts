@@ -10,6 +10,7 @@ export function useTopicGraph() {
   const [graphStatus, setGraphStatus] = useState<GraphStatus>({
     topicsCount: 0,
     edgesCount: 0,
+    chunksCount: 0,
     lastBuilt: null,
     isBuilding: false,
   });
