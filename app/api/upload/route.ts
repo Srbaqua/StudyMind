@@ -6,7 +6,7 @@ import { extractPptx } from "@/ingestion/pptxExtractor";
 import { extractImage } from "@/ingestion/imageExtractor";
 import { chunkDocument } from "@/ingestion/chunker";
 import { embedAndStoreChunks } from "@/retrieval/embedder";
-import { rememberInteraction } from "@/lib/cognee";
+import { rememberInteraction, CONTENT_DATASET } from "@/lib/cognee";
 import { randomUUID } from "crypto";
 
 export const maxDuration = 300;
@@ -75,6 +75,17 @@ async function processDocument(docId: string, buffer: Buffer, fmt: string, fileN
     }
 
     await embedAndStoreChunks(chunks, docId);
+        // Feed the actual notes content into Cognee's own knowledge graph, separate
+    // from the learner-memory dataset. This lets Cognee extract concept-level
+    // relationships (e.g. "X uses Y") that pure embedding clustering can't.
+    const contentForGraph = chunks
+      .map((c) => `## ${c.sectionHeading}\n${c.text}`)
+      .join("\n\n")
+      .slice(0, 20000); // keep ingest calls reasonably sized
+
+    rememberInteraction(contentForGraph, CONTENT_DATASET).catch((err) =>
+      console.error("cognee content ingest failed:", err)
+    );
 
     await supabase
       .from("documents")

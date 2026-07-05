@@ -17,10 +17,10 @@ export async function synthesize(
     .join("\n\n---\n\n");
 
   const memoryBlock = memoryContext
-    ? `STUDENT'S LEARNING HISTORY (from memory — things they've asked or struggled with before, may be partial):
+    ? `ADDITIONAL CONTEXT FROM COGNEE MEMORY (may include the student's prior questions and/or concept relationships Cognee extracted from the notes; may be partial):
 ${memoryContext}
 
-If relevant, briefly acknowledge what they already asked or got wrong before, and build on it instead of repeating the same explanation from scratch. Do not force this in if it isn't relevant.
+Use this to build on what the student already knows and to surface non-obvious connections between concepts, but do not force it in if it isn't relevant.
 `
     : "";
 

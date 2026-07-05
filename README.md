@@ -13,7 +13,67 @@ StudyMind is a Next.js app for turning lecture notes, PDFs, slide decks, and ima
 - Quiz generation from uploaded material
 - Evaluation endpoint for the built-in dataset
 
-## Memory Layer (Cognee)
+## Memory & Knowledge Graph Layer (Cognee)
+
+StudyMind uses [Cognee](https://www.cognee.ai) to add two things the base RAG pipeline
+doesn't have on its own: memory of the learner across sessions, and relationship-level
+structure over the notes content.
+
+### Why this matters
+The existing pipeline (`chunks` → embeddings → pgvector → UMAP/DBSCAN topic clusters)
+is excellent at finding *which chunks are semantically similar* and grouping them into
+topic blobs. What it cannot do is represent *how concepts relate to each other*
+(e.g. "Dijkstra's algorithm relies on a priority queue", "DFS and topological sort are
+connected"), and it has no memory of the individual student between questions — every
+call to `/api/ask` was previously stateless except for the document content itself.
+Cognee fills both gaps by building an actual knowledge graph via LLM-driven entity and
+relationship extraction, on top of a graph + vector store.
+
+### Two datasets, two purposes
+
+| Dataset | What goes in | What it's for |
+|---|---|---|
+| `learner_memory` | Every question asked, the answer given, and related topics; plus a note each time a document is uploaded | Cross-session memory of *this student* — what they've asked, what they seem to still be confused about |
+| `course_content` | The full extracted text of every uploaded document, section by section | A concept-relationship graph over *the material itself*, extracted by Cognee's LLM-driven graph construction — separate from and complementary to the UMAP/DBSCAN topic clusters |
+
+### The four Cognee lifecycle operations, as used here
+
+- **remember** (`lib/cognee.ts` → `rememberInteraction`) — implemented as `POST /api/v1/add`
+  (ingest raw text into a dataset) followed by `POST /api/v1/cognify` (turn it into graph
+  structure: entities + relationships). Called:
+  - after every `/api/ask` response, to store the Q&A into `learner_memory`
+  - after every successful document upload, to store both an upload-event note in
+    `learner_memory` and the full document text in `course_content`
+- **recall** (`recallMemory`) — implemented as `POST /api/v1/recall` with
+  `search_type: GRAPH_COMPLETION`, which lets Cognee traverse the graph rather than
+  just do nearest-neighbor lookup. Called twice per question, in parallel, against both
+  datasets, and the results are merged into the prompt sent to the LLM in
+  `retrieval/synthesizer.ts`.
+- **improve** — Cognee runs enrichment as part of `cognify` automatically; a manual
+  `improve`/memify pass can be triggered periodically (e.g. via a cron hitting
+  `/api/v1/cognify` again on `learner_memory`) to re-weight the graph as more
+  interactions accumulate. *(Stretch goal — not wired to a UI button in this build.)*
+- **forget** (`forgetMemory`) — implemented as `DELETE /api/v1/datasets/{name}`.
+  Exposed via `DELETE /api/memory` and the "Forget my learning history" button in the
+  chat sidebar, so a student can wipe their memory graph once a subject/exam is done.
+
+### Request flow for `POST /api/ask`
+
+1. Hybrid retrieval (vector + keyword) → graph-hop expansion over the `topics` table → rerank — unchanged.
+2. In parallel: `recallMemory(question, "learner_memory")` and `recallMemory(question, "course_content")`.
+3. Both are merged into a single context block and passed into `synthesize()`, so the
+   final answer can (a) build on what the student has asked before instead of repeating
+   itself, and (b) surface concept relationships Cognee found that pure vector search
+   would miss.
+4. The Q&A is written back into `learner_memory` via `remember()` for next time.
+
+### Environment variables
+
+```bash
+COGNEE_SERVICE_URL=https://your-instance.cognee.ai
+COGNEE_API_KEY=ck_your_cognee_api_key
+COGNEE_DATASET_NAME=learner_memory   # optional, defaults to learner_memory
+```
 
 StudyMind builds two separate graphs:
 

@@ -25,8 +25,8 @@ export const CONSTANTS = {
   COHERE_RERANK_MODEL: "rerank-english-v3.0",
 
   // LLM
-  OPENROUTER_CHAT_MODEL: "openai/gpt-oss-120b" as const,
-  OPENROUTER_MAX_TOKENS: 512,
+ OPENROUTER_CHAT_MODEL: "openai/gpt-oss-120b" as const,
+  OPENROUTER_MAX_TOKENS: 1200,
 
   // Polling
   STATUS_POLL_INTERVAL_MS: 2500,

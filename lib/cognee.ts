@@ -1,6 +1,7 @@
 const BASE_URL = process.env.COGNEE_SERVICE_URL ?? "";
 const API_KEY = process.env.COGNEE_API_KEY ?? "";
-const DATASET = process.env.COGNEE_DATASET_NAME ?? "learner_memory";
+const DEFAULT_DATASET = process.env.COGNEE_DATASET_NAME ?? "learner_memory";
+export const CONTENT_DATASET = "course_content";
 
 async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
   if (!BASE_URL || !API_KEY) {
@@ -22,30 +23,36 @@ async function cogneeFetch(path: string, init: RequestInit): Promise<any> {
   return res.json();
 }
 
-/** Store a piece of the student's learning history in the memory graph. */
-export async function rememberInteraction(text: string, dataset: string = DATASET): Promise<void> {
+/**
+ * Write text into a Cognee dataset and turn it into graph structure.
+ * IMPORTANT: /api/v1/add only reliably accepts multipart/form-data — every
+ * documented working example uses -F flags, never a JSON body. Sending
+ * datasetName as JSON gets silently dropped, which was the actual cause
+ * of the "Either datasetId or datasetName must be provided" 409.
+ */
+export async function rememberInteraction(text: string, dataset: string = DEFAULT_DATASET): Promise<void> {
+  const form = new FormData();
+  // Must be an actual file part (UploadFile), not a plain string field —
+  // Cognee's /add endpoint rejects string fields with a 422.
+  const blob = new Blob([text], { type: "text/plain" });
+  form.append("data", blob, "interaction.txt");
+  form.append("datasetName", dataset);
+
   await cogneeFetch("/api/v1/add", {
     method: "POST",
-    body: JSON.stringify({
-      data: text,
-    }),
+    body: form,
   });
 
   await cogneeFetch("/api/v1/cognify", {
     method: "POST",
     body: JSON.stringify({
       datasets: [dataset],
+      run_in_background: true,
     }),
   });
 }
 
-/**
- * Query the memory graph. Returns a flattened text block ready to drop into a prompt.
- * NOTE: the exact JSON shape of /recall can vary slightly by Cognee version — this
- * defensively handles the common shapes (array of strings, array of {text}, {results: [...]}).
- * If it comes back empty but you know memory exists, console.log(raw) once and adjust below.
- */
-export async function recallMemory(query: string, dataset: string = DATASET): Promise<string> {
+export async function recallMemory(query: string, dataset: string = DEFAULT_DATASET): Promise<string> {
   let raw: any;
   try {
     raw = await cogneeFetch("/api/v1/recall", {
@@ -80,8 +87,7 @@ export async function recallMemory(query: string, dataset: string = DATASET): Pr
     .join("\n---\n");
 }
 
-/** Wipe the learner's memory graph, e.g. after a subject/exam is done. */
-export async function forgetMemory(dataset: string = DATASET): Promise<void> {
+export async function forgetMemory(dataset: string = DEFAULT_DATASET): Promise<void> {
   await cogneeFetch(`/api/v1/datasets/${encodeURIComponent(dataset)}`, {
     method: "DELETE",
   });
